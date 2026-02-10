@@ -750,8 +750,9 @@ class Menu:
         c_print(f"  0. {zero_label}", Colors.YELLOW)
         print()
 
-    def wait_back(self, prompt: str = "0. 返回上一级"):
+    def wait_back(self, prompt: str = "0. 返回上级"):
         while True:
+            print()
             c_print(f"  {prompt}", Colors.YELLOW)
             try:
                 v = input("  请输入选项: ").strip()
@@ -760,6 +761,15 @@ class Menu:
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
+
+    def ask_choice(self, prompt: str) -> str:
+        print()
+        c_print(f"  {prompt}", Colors.YELLOW)
+        try:
+            return input("  请输入选项: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return ""
 
     def show_subs(self):
         subs = self.sub_manager.get_saved_subs()
@@ -817,7 +827,7 @@ class Menu:
             else:
                 prompt = "  选择订阅编号: "
 
-            v = input(prompt).strip()
+            v = self.ask_choice(prompt)
             if not v and default:
                 for i, (_, url) in enumerate(subs):
                     if url == default:
@@ -889,7 +899,8 @@ class Menu:
         self.show_subs()
 
         try:
-            idx = int(input("  删除订阅编号: ").strip()) - 1
+            v = self.ask_choice("删除订阅编号:")
+            idx = int(v) - 1
             if self.sub_manager.remove_sub(idx):
                 msg_info("已删除订阅")
             else:
@@ -917,7 +928,8 @@ class Menu:
         line()
 
         try:
-            idx = int(input("  选择节点编号: ").strip()) - 1
+            v = self.ask_choice("选择节点编号:")
+            idx = int(v) - 1
             if idx < 0 or idx >= len(names):
                 msg_err("节点编号无效")
                 return
@@ -1241,7 +1253,8 @@ WantedBy=multi-user.target
 
         self.show_subs()
         try:
-            idx = int(input("  选择默认订阅编号: ").strip()) - 1
+            v = self.ask_choice("选择默认订阅编号:")
+            idx = int(v) - 1
             if 0 <= idx < len(subs):
                 self.sub_manager.set_default_sub(subs[idx][1])
                 msg_info(f"已设为默认：{subs[idx][0]}")
