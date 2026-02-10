@@ -1192,58 +1192,50 @@ WantedBy=multi-user.target
         while self.running:
             logo()
             self.print_menu([
-                ("1", "添加订阅"),
-                ("2", "更新订阅"),
-                ("M", "订阅管理"),
-                ("3", "选择节点"),
-                ("4", "当前状态"),
-                ("5", "重启服务"),
-                ("6", "停止服务"),
-                ("7", "查看日志"),
-                ("8", "连通检测"),
-                ("9", "延迟检测"),
-                ("10", "直连模式"),
-                ("U", "卸载全部"),
+                ("1", "订阅管理"),
+                ("2", "选择节点"),
+                ("3", "当前状态"),
+                ("4", "重启服务"),
+                ("5", "停止服务"),
+                ("6", "查看日志"),
+                ("7", "连通检测"),
+                ("8", "延迟检测"),
+                ("9", "直连模式"),
+                ("10", "卸载全部"),
             ])
 
             try:
-                choice = input("  请输入选项: ").strip().upper()
+                choice = input("  请输入选项: ").strip()
             except (EOFError, KeyboardInterrupt):
                 choice = "0"
 
             if choice == "1":
-                self.add_sub()
-                self.wait_back()
-            elif choice == "2":
-                self.update_sub()
-                self.wait_back()
-            elif choice == "M":
                 self.sub_menu()
-            elif choice == "3":
+            elif choice == "2":
                 self.select_node()
                 self.wait_back()
-            elif choice == "4":
+            elif choice == "3":
                 self.show_status()
                 self.wait_back()
-            elif choice == "5":
+            elif choice == "4":
                 self.restart_service()
                 self.wait_back()
-            elif choice == "6":
+            elif choice == "5":
                 self.stop_service()
                 self.wait_back()
-            elif choice == "7":
+            elif choice == "6":
                 self.show_logs()
                 self.wait_back()
-            elif choice == "8":
+            elif choice == "7":
                 self.test_connectivity()
                 self.wait_back()
-            elif choice == "9":
+            elif choice == "8":
                 self.test_latency()
                 self.wait_back()
-            elif choice == "10":
+            elif choice == "9":
                 self.direct_mode()
                 self.wait_back()
-            elif choice == "U":
+            elif choice == "10":
                 self.uninstall()
                 self.wait_back()
             elif choice == "0":
@@ -1253,9 +1245,11 @@ WantedBy=multi-user.target
         while True:
             logo()
             self.print_menu([
-                ("1", "查看订阅"),
-                ("2", "设为默认"),
-                ("3", "删除订阅"),
+                ("1", "添加订阅"),
+                ("2", "更新订阅"),
+                ("3", "查看订阅"),
+                ("4", "设为默认"),
+                ("5", "删除订阅"),
             ], "订阅管理")
 
             try:
@@ -1264,12 +1258,18 @@ WantedBy=multi-user.target
                 break
 
             if choice == "1":
-                self.show_subs()
+                self.add_sub()
                 self.wait_back()
             elif choice == "2":
-                self.set_default_sub()
+                self.update_sub()
                 self.wait_back()
             elif choice == "3":
+                self.show_subs()
+                self.wait_back()
+            elif choice == "4":
+                self.set_default_sub()
+                self.wait_back()
+            elif choice == "5":
                 self.delete_sub()
                 self.wait_back()
             elif choice == "0":
