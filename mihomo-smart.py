@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Mihomo Smart Proxy Manager
 支持多种订阅格式的 Mihomo 代理管理面板
@@ -55,23 +56,21 @@ if not sys.stdout.isatty() or os.getenv("NO_COLOR"):
     Colors.disable()
 
 def c_print(msg: str, color: str = Colors.RESET):
-    """带颜色的打印"""
     print(f"{color}{msg}{Colors.RESET}")
 
-def line() -> None:
-    """打印分隔线"""
+def line():
     c_print("-" * 55, Colors.GREEN)
 
-def msg_info(msg: str) -> None:
+def msg_info(msg: str):
     c_print(f"  {msg}", Colors.GREEN)
 
-def msg_warn(msg: str) -> None:
+def msg_warn(msg: str):
     c_print(f"  {msg}", Colors.YELLOW)
 
-def msg_err(msg: str) -> None:
+def msg_err(msg: str):
     c_print(f"  {msg}", Colors.RED)
 
-def msg_title(msg: str) -> None:
+def msg_title(msg: str):
     c_print(f"  {msg}", Colors.BOLD)
 
 # ============== Logo ==============
@@ -91,13 +90,11 @@ def logo():
 
 # ============== 工具函数 ==============
 def rand_str(length: int = 12) -> str:
-    """生成随机字符串"""
     import random
     import string
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 def get_auth() -> Tuple[str, str]:
-    """获取认证信息"""
     if AUTH_FILE.exists():
         content = AUTH_FILE.read_text().strip()
         if ':' in content:
@@ -111,7 +108,6 @@ def get_auth() -> Tuple[str, str]:
 USER, PASS = get_auth()
 
 def get_public_ip() -> str:
-    """获取公网IP"""
     try:
         ip = subprocess.check_output(
             ["curl", "-4", "-s", "--max-time", "6", "ip.sb"],
@@ -121,19 +117,6 @@ def get_public_ip() -> str:
     except:
         return "未获取到 IPv4"
 
-def shell(cmd: List[str], capture: bool = True) -> Tuple[bool, str]:
-    """执行shell命令"""
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=capture,
-            text=True,
-            timeout=30 if capture else None
-        )
-        return result.returncode == 0, result.stdout if capture else ""
-    except Exception as e:
-        return False, str(e)
-
 # ============== YAML 解析与转换 ==============
 class YAMLConverter:
     """YAML 格式转换器"""
@@ -141,13 +124,10 @@ class YAMLConverter:
     @staticmethod
     def normalize(content: str) -> str:
         """标准化 YAML 内容"""
-        # 去除 BOM
         if content.startswith('\ufeff'):
             content = content[1:]
-        # 转换 Windows 换行
         content = content.replace('\r\n', '\n').replace('\r', '\n')
 
-        # 转换行内 YAML 格式: - {key: value, key2: value2}
         def convert_inline(match):
             indent = len(match.group(1))
             items = match.group(2)
@@ -161,63 +141,46 @@ class YAMLConverter:
     def parse_proxies(content: str) -> List[Dict[str, Any]]:
         """解析 proxies 块"""
         proxies = []
-
         in_proxies = False
         base_indent = 0
         current_proxy = None
-        current_indent = 0
 
         lines = content.split('\n')
-        i = 0
-        while i < len(lines):
-            line = lines[i]
-
+        for line in lines:
             if not in_proxies:
                 if re.match(r'^\s*proxies\s*:\s*$', line):
                     in_proxies = True
                     m = re.match(r'^(\s*)proxies\s*:\s*$', line)
                     base_indent = len(m.group(1)) if m else 0
-                i += 1
                 continue
 
-            # 计算缩进
             stripped = line.lstrip()
             indent = len(line) - len(stripped)
 
-            # 退出 proxies 块
             if not stripped or (indent <= base_indent and not stripped.startswith('-')):
                 if current_proxy:
                     proxies.append(current_proxy)
                     current_proxy = None
-                if not stripped or (indent <= base_indent and not stripped.startswith('-')):
-                    if indent < base_indent:
-                        break
-                i += 1
+                if indent < base_indent:
+                    break
                 continue
 
-            # 新节点
             if stripped.startswith('-'):
                 if current_proxy:
                     proxies.append(current_proxy)
                 current_proxy = {}
-                current_indent = indent
-                i += 1
                 continue
 
-            # 解析键值
             if current_proxy is not None and ':' in stripped:
                 parts = stripped.split(':', 1)
                 if len(parts) == 2:
                     key = parts[0].strip()
                     val = parts[1].strip()
-                    # 去除引号
                     if val.startswith('"') and val.endswith('"'):
                         val = val[1:-1]
                     elif val.startswith("'") and val.endswith("'"):
                         val = val[1:-1]
                     current_proxy[key] = val
-
-            i += 1
 
         if current_proxy:
             proxies.append(current_proxy)
@@ -234,7 +197,6 @@ class YAMLConverter:
             m = re.search(r'\bname\s*:\s*', line)
             if m:
                 s = line[m.end():].strip()
-                # 处理引号
                 if s.startswith('"') and '"' in s[1:]:
                     name = s[1:s.index('"', 1)]
                 elif s.startswith("'") and "'" in s[1:]:
@@ -252,7 +214,6 @@ class YAMLConverter:
 
     @staticmethod
     def b64_decode(data: bytes) -> Optional[bytes]:
-        """Base64 解码"""
         try:
             data = b"".join(data.split())
             data = data.replace(b"-", b"+").replace(b"_", b"/")
@@ -270,18 +231,13 @@ class SubscriptionManager:
         self.workdir.mkdir(parents=True, exist_ok=True)
 
     def fetch(self, url: str, ua: str = "Mihomo") -> Optional[str]:
-        """获取订阅内容"""
         try:
             req = urllib.request.Request(
                 url,
-                headers={
-                    'User-Agent': ua,
-                    'Accept-Encoding': 'gzip, deflate'
-                }
+                headers={'User-Agent': ua, 'Accept-Encoding': 'gzip, deflate'}
             )
             with urllib.request.urlopen(req, timeout=15) as resp:
                 data = resp.read()
-                # 尝试解压
                 if resp.info().get('Content-Encoding') == 'gzip':
                     import gzip
                     data = gzip.decompress(data)
@@ -290,10 +246,8 @@ class SubscriptionManager:
             return None
 
     def parse(self, url: str) -> Optional[List[Dict]]:
-        """解析订阅，返回节点列表"""
         content = None
 
-        # 尝试多种 UA
         for ua in ["Mihomo", "Clash", "Clash for Windows", "clash.meta", "Mozilla/5.0"]:
             content = self.fetch(url, ua)
             if content:
@@ -302,12 +256,9 @@ class SubscriptionManager:
         if not content:
             return None
 
-        # 标准化
         content = YAMLConverter.normalize(content)
 
-        # 检查是否是 Clash YAML
         if 'proxies:' not in content:
-            # 尝试 base64 解码
             decoded = YAMLConverter.b64_decode(content.encode())
             if decoded:
                 content = decoded.decode('utf-8', errors='ignore')
@@ -316,12 +267,10 @@ class SubscriptionManager:
         if 'proxies:' not in content:
             return None
 
-        # 解析节点
         proxies = YAMLConverter.parse_proxies(content)
         return proxies if proxies else None
 
     def get_saved_subs(self) -> List[Tuple[str, str]]:
-        """获取已保存的订阅"""
         subs = []
         if SUB_URLS_FILE.exists():
             for line in SUB_URLS_FILE.read_text().strip().split('\n'):
@@ -336,9 +285,7 @@ class SubscriptionManager:
         return subs
 
     def add_sub(self, name: str, url: str) -> bool:
-        """添加订阅"""
         subs = self.get_saved_subs()
-        # 检查是否已存在
         for _, u in subs:
             if u == url:
                 return False
@@ -346,14 +293,12 @@ class SubscriptionManager:
         with open(SUB_URLS_FILE, 'a') as f:
             f.write(f"{name}|{url}\n")
 
-        # 如果是第一个订阅，设为默认
         if len(subs) == 0:
             SUB_DEFAULT_FILE.write_text(url)
 
         return True
 
     def remove_sub(self, index: int) -> bool:
-        """删除订阅"""
         subs = self.get_saved_subs()
         if index < 0 or index >= len(subs):
             return False
@@ -366,13 +311,11 @@ class SubscriptionManager:
         return True
 
     def get_default_sub(self) -> Optional[str]:
-        """获取默认订阅"""
         if SUB_DEFAULT_FILE.exists():
             return SUB_DEFAULT_FILE.read_text().strip()
         return None
 
     def set_default_sub(self, url: str) -> None:
-        """设置默认订阅"""
         SUB_DEFAULT_FILE.write_text(url)
 
 # ============== 节点测试 ==============
@@ -381,7 +324,6 @@ class NodeTester:
 
     @staticmethod
     def test_tcp(host: str, port: int, timeout: float = 5) -> bool:
-        """测试 TCP 连通性"""
         try:
             import socket
             sock = socket.create_connection((host, port), timeout=timeout)
@@ -392,25 +334,22 @@ class NodeTester:
 
     @staticmethod
     def test_latency(host: str, port: int, timeout: float = 3) -> Optional[int]:
-        """测试延迟（毫秒）"""
         try:
             import socket
-            import time
-            start = time.time()
+            import time as t
+            start = t.time()
             sock = socket.create_connection((host, port), timeout=timeout)
             sock.close()
-            return int((time.time() - start) * 1000)
+            return int((t.time() - start) * 1000)
         except:
             return None
 
     @staticmethod
     def get_node_host_port(content: str, node_name: str) -> Optional[Tuple[str, int]]:
-        """从配置中获取节点的 host 和 port"""
         in_node = False
         host = port = None
 
         for line in content.split('\n'):
-            # 查找目标节点
             if f'name: "{node_name}"' in line or f"name: '{node_name}'" in line:
                 in_node = True
                 continue
@@ -426,7 +365,6 @@ class NodeTester:
                         port = int(m.group(1))
                 elif host and port:
                     return host, port
-                # 遇到新节点或结束
                 if line.strip().startswith('- name:'):
                     break
 
@@ -440,7 +378,6 @@ class ConfigGenerator:
         self.proxies = proxies
 
     def gen_config(self, active_node: str) -> str:
-        """生成配置"""
         lines = [
             f"port: {HTTP_PORT}",
             f"socks-port: {SOCKS_PORT}",
@@ -455,7 +392,6 @@ class ConfigGenerator:
             "proxies:"
         ]
 
-        # 添加节点
         for proxy in self.proxies:
             name = proxy.get('name', '')
             if not name:
@@ -484,7 +420,6 @@ class ConfigGenerator:
                 else:
                     lines.append(f"    {k}: {v}")
 
-        # 添加代理组
         lines.extend([
             "",
             "proxy-groups:",
@@ -497,7 +432,6 @@ class ConfigGenerator:
         return '\n'.join(lines)
 
     def gen_direct_config(self) -> str:
-        """生成直连配置"""
         return f'''port: {HTTP_PORT}
 socks-port: {SOCKS_PORT}
 allow-lan: true
@@ -521,9 +455,8 @@ class Menu:
         self.running = True
 
     def print_menu(self, items: List[Tuple[str, str]], title: str = ""):
-        """打印菜单"""
+        print()
         if title:
-            print()
             line()
             msg_title(title)
             line()
@@ -532,8 +465,7 @@ class Menu:
         c_print("  0. 返回上级/退出", Colors.YELLOW)
         print()
 
-    def wait_back(self, prompt: str = "0. 返回上一级") -> None:
-        """等待返回"""
+    def wait_back(self, prompt: str = "0. 返回上一级"):
         while True:
             try:
                 v = input(f"  {prompt} ").strip()
@@ -543,8 +475,7 @@ class Menu:
                 print()
                 break
 
-    def show_subs(self) -> None:
-        """显示订阅列表"""
+    def show_subs(self):
         subs = self.sub_manager.get_saved_subs()
         default = self.sub_manager.get_default_sub()
 
@@ -562,8 +493,7 @@ class Menu:
 
         line()
 
-    def add_sub(self) -> None:
-        """添加订阅"""
+    def add_sub(self):
         try:
             url = input("  输入订阅链接 (支持 Clash/Mihomo 或 v2rayN): ").strip()
             if not url:
@@ -572,7 +502,6 @@ class Menu:
 
             name = input("  订阅名称 (可选，回车自动生成): ").strip()
             if not name:
-                # 从 URL 提取名称
                 from urllib.parse import urlparse
                 parsed = urlparse(url)
                 name = parsed.hostname or "订阅"
@@ -585,13 +514,12 @@ class Menu:
         except (EOFError, KeyboardInterrupt):
             print()
 
-    def update_sub(self) -> None:
-        """更新订阅"""
+    def update_sub(self):
         subs = self.sub_manager.get_saved_subs()
         default = self.sub_manager.get_default_sub()
 
         if not subs:
-            msg_warn("未添加订阅，请先选择"添加订阅"")
+            msg_warn("未添加订阅，请先选择添加订阅")
             return
 
         self.show_subs()
@@ -605,7 +533,6 @@ class Menu:
 
             v = input(prompt).strip()
             if not v and default:
-                # 使用默认
                 for i, (_, url) in enumerate(subs):
                     if url == default:
                         idx = i
@@ -622,8 +549,7 @@ class Menu:
         except (ValueError, EOFError, KeyboardInterrupt):
             print()
 
-    def update_sub_direct(self, url: str) -> None:
-        """直接更新指定订阅"""
+    def update_sub_direct(self, url: str):
         msg_info("正在下载订阅并解析节点...")
 
         proxies = self.sub_manager.parse(url)
@@ -633,11 +559,9 @@ class Menu:
             msg_warn("可能原因：订阅过期/绑定 IP/UA 限制/访问受限")
             return
 
-        # 保存节点
         names = [p.get('name', '') for p in proxies if p.get('name')]
         PROXY_FILE.write_text('\n'.join(names))
 
-        # 保存 proxies.yaml
         with open(PROXY_YAML, 'w') as f:
             f.write("proxies:\n")
             for proxy in proxies:
@@ -670,8 +594,7 @@ class Menu:
 
         msg_info(f"解析完成，节点数量：{len(names)}")
 
-    def delete_sub(self) -> None:
-        """删除订阅"""
+    def delete_sub(self):
         subs = self.sub_manager.get_saved_subs()
         if not subs:
             msg_warn("暂无订阅")
@@ -688,8 +611,7 @@ class Menu:
         except (ValueError, EOFError, KeyboardInterrupt):
             print()
 
-    def select_node(self) -> None:
-        """选择节点"""
+    def select_node(self):
         if not PROXY_FILE.exists():
             msg_warn("未找到节点，请先更新订阅")
             return
@@ -717,7 +639,6 @@ class Menu:
             node_name = names[idx]
             ACTIVE.write_text(node_name)
 
-            # 测试连通性
             content = PROXY_YAML.read_text()
             result = NodeTester.get_node_host_port(content, node_name)
 
@@ -734,9 +655,7 @@ class Menu:
         except (ValueError, EOFError, KeyboardInterrupt):
             print()
 
-    def gen_service(self, active_node: str) -> None:
-        """生成配置并启动服务"""
-        # 读取 proxies
+    def gen_service(self, active_node: str):
         proxies = []
         if PROXY_YAML.exists():
             proxies = YAMLConverter.parse_proxies(PROXY_YAML.read_text())
@@ -745,12 +664,10 @@ class Menu:
             msg_warn("未找到节点配置")
             return
 
-        # 生成配置
         gen = ConfigGenerator(proxies)
         config = gen.gen_config(active_node)
         CONFIG.write_text(config)
 
-        # 写入 systemd 服务
         service_content = f"""[Unit]
 Description=Mihomo Smart Proxy
 After=network.target
@@ -766,17 +683,17 @@ WantedBy=multi-user.target
         service_file = Path("/etc/systemd/system/mihomo-proxy.service")
         service_file.write_text(service_content)
 
-        # 重启服务
         subprocess.run(["systemctl", "daemon-reload"], check=False)
         subprocess.run(["systemctl", "enable", "mihomo-proxy"], check=False)
         subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False)
 
-        # 显示连接信息
         ip = get_public_ip()
-        status = Colors.GREEN + "运行中" + Colors.RESET
-        if subprocess.run(["systemctl", "is-active", "mihomo-proxy"],
-                         capture_output=True).returncode != 0:
-            status = Colors.RED + "已停止" + Colors.RESET
+        is_active = subprocess.run(
+            ["systemctl", "is-active", "mihomo-proxy"],
+            capture_output=True
+        ).returncode == 0
+
+        status = Colors.GREEN + "运行中" + Colors.RESET if is_active else Colors.RED + "已停止" + Colors.RESET
 
         print()
         line()
@@ -786,16 +703,13 @@ WantedBy=multi-user.target
         c_print(f"  SOCKS : socks5://{USER}:{PASS}@{ip}:{SOCKS_PORT}", Colors.CYAN)
         line()
 
-    def direct_mode(self) -> None:
-        """直连模式"""
+    def direct_mode(self):
         gen = ConfigGenerator([])
         config = gen.gen_direct_config()
         CONFIG.write_text(config)
 
-        # 写入模式
         MODE_FILE.write_text("direct")
 
-        # systemd 服务
         service_content = f"""[Unit]
 Description=Mihomo Smart Proxy
 After=network.target
@@ -823,8 +737,7 @@ WantedBy=multi-user.target
         c_print(f"  SOCKS : socks5://{USER}:{PASS}@{ip}:{SOCKS_PORT}", Colors.CYAN)
         line()
 
-    def show_status(self) -> None:
-        """显示状态"""
+    def show_status(self):
         print()
         line()
         msg_title("当前状态：")
@@ -839,7 +752,6 @@ WantedBy=multi-user.target
 
         line()
 
-        # 显示连接信息
         ip = get_public_ip()
         is_active = subprocess.run(
             ["systemctl", "is-active", "mihomo-proxy"],
@@ -853,8 +765,7 @@ WantedBy=multi-user.target
         c_print(f"  SOCKS : socks5://{USER}:{PASS}@{ip}:{SOCKS_PORT}", Colors.CYAN)
         line()
 
-    def test_connectivity(self) -> None:
-        """测试连通性"""
+    def test_connectivity(self):
         ip = get_public_ip()
 
         print()
@@ -892,8 +803,7 @@ WantedBy=multi-user.target
 
         line()
 
-    def test_latency(self) -> None:
-        """测试所有节点延迟"""
+    def test_latency(self):
         if not PROXY_FILE.exists():
             msg_warn("未找到节点，请先更新订阅")
             return
@@ -924,18 +834,15 @@ WantedBy=multi-user.target
 
         line()
 
-    def restart_service(self) -> None:
-        """重启服务"""
+    def restart_service(self):
         subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False)
         msg_info("代理服务已重启")
 
-    def stop_service(self) -> None:
-        """停止服务"""
+    def stop_service(self):
         subprocess.run(["systemctl", "stop", "mihomo-proxy"], check=False)
         msg_info("代理服务已停止")
 
-    def show_logs(self) -> None:
-        """查看日志"""
+    def show_logs(self):
         print()
         line()
         msg_title("Mihomo 运行日志（最近 50 行）")
@@ -948,8 +855,7 @@ WantedBy=multi-user.target
         except:
             msg_err("无法读取日志")
 
-    def uninstall(self) -> None:
-        """卸载"""
+    def uninstall(self):
         try:
             v = input("  确认卸载？y/n: ").strip().lower()
             if v == 'y':
@@ -962,8 +868,7 @@ WantedBy=multi-user.target
         except (EOFError, KeyboardInterrupt):
             print()
 
-    def run(self) -> None:
-        """运行主菜单"""
+    def run(self):
         while self.running:
             logo()
             self.print_menu([
@@ -1024,8 +929,7 @@ WantedBy=multi-user.target
             elif choice == "0":
                 self.running = False
 
-    def sub_menu(self) -> None:
-        """订阅管理子菜单"""
+    def sub_menu(self):
         while True:
             logo()
             self.print_menu([
@@ -1051,8 +955,7 @@ WantedBy=multi-user.target
             elif choice == "0":
                 break
 
-    def set_default_sub(self) -> None:
-        """设置默认订阅"""
+    def set_default_sub(self):
         subs = self.sub_manager.get_saved_subs()
         if not subs:
             msg_warn("暂无订阅")
@@ -1071,8 +974,6 @@ WantedBy=multi-user.target
 
 # ============== Mihomo 安装 ==============
 def install_mihomo() -> bool:
-    """安装 Mihomo"""
-    # 检查是否已安装
     try:
         if subprocess.run(["which", "mihomo"], capture_output=True).returncode == 0:
             return True
@@ -1101,7 +1002,6 @@ def install_mihomo() -> bool:
     url = os.getenv("MIHOMO_URL")
     if not url:
         try:
-            # 获取最新版本
             req = urllib.request.Request(
                 "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest",
                 headers={"User-Agent": "mihomo-smart"}
@@ -1122,7 +1022,6 @@ def install_mihomo() -> bool:
         msg_err("未找到对应的发行包")
         return False
 
-    # 下载
     msg_info(f"正在下载：{url}")
     tmp = Path("/tmp/mihomo.tmp")
     try:
@@ -1130,7 +1029,6 @@ def install_mihomo() -> bool:
         with urllib.request.urlopen(req, timeout=30) as resp:
             tmp.write_bytes(resp.read())
 
-        # 解压
         if url.endswith(".gz"):
             import gzip
             data = gzip.decompress(tmp.read_bytes())
@@ -1149,20 +1047,16 @@ def install_mihomo() -> bool:
 
 # ============== 主程序 ==============
 def main():
-    # 确保以 root 运行
     if os.geteuid() != 0:
         print("请使用 root 权限运行此脚本")
         sys.exit(1)
 
-    # 安装 Mihomo
     if not install_mihomo():
         msg_err("Mihomo 安装失败，无法继续")
         sys.exit(1)
 
-    # 创建工作目录
     WORKDIR.mkdir(parents=True, exist_ok=True)
 
-    # 运行菜单
     menu = Menu()
     try:
         menu.run()
