@@ -10,7 +10,6 @@ import sys
 import re
 import json
 import base64
-import time
 import subprocess
 import urllib.parse
 import urllib.request
@@ -20,7 +19,6 @@ from collections import OrderedDict
 
 # ============== 配置 ==============
 WORKDIR = Path("/etc/mihomo-smart")
-SUB_FILE = WORKDIR / "sub.yaml"
 PROXY_FILE = WORKDIR / "proxies.txt"
 PROXY_YAML = WORKDIR / "proxies.yaml"
 ACTIVE = WORKDIR / "active.txt"
@@ -45,12 +43,11 @@ class Colors:
     YELLOW = '\033[33m'
     RED = '\033[31m'
     CYAN = '\033[36m'
-    MAGENTA = '\033[35m'
 
     @classmethod
     def disable(cls):
         cls.RESET = cls.BOLD = cls.BLUE = cls.GREEN = ''
-        cls.YELLOW = cls.RED = cls.CYAN = cls.MAGENTA = ''
+        cls.YELLOW = cls.RED = cls.CYAN = ''
 
 if not sys.stdout.isatty() or os.getenv("NO_COLOR"):
     Colors.disable()
@@ -188,31 +185,6 @@ class YAMLConverter:
         return proxies
 
     @staticmethod
-    def extract_proxy_names(content: str) -> List[str]:
-        """提取节点名称"""
-        names = []
-        seen = set()
-
-        for line in content.split('\n'):
-            m = re.search(r'\bname\s*:\s*', line)
-            if m:
-                s = line[m.end():].strip()
-                if s.startswith('"') and '"' in s[1:]:
-                    name = s[1:s.index('"', 1)]
-                elif s.startswith("'") and "'" in s[1:]:
-                    name = s[1:s.index("'", 1)]
-                else:
-                    name = re.split(r'[},#]', s)[0].strip()
-                    if ',' in name:
-                        name = name.split(',')[0].strip()
-
-                if name and name not in seen:
-                    seen.add(name)
-                    names.append(name)
-
-        return names
-
-    @staticmethod
     def b64_decode(data: bytes) -> Optional[bytes]:
         try:
             data = b"".join(data.split())
@@ -243,14 +215,6 @@ class NodeListConverter:
         s = s.strip().replace("-", "+").replace("_", "/")
         s += "=" * (-len(s) % 4)
         return base64.b64decode(s)
-
-    @staticmethod
-    def _yaml_scalar(val: Any) -> Any:
-        if isinstance(val, bool):
-            return bool(val)
-        if isinstance(val, int):
-            return int(val)
-        return str(val)
 
     @staticmethod
     def _parse_hostport(hp: str) -> Optional[Tuple[str, int]]:
@@ -774,7 +738,7 @@ class Menu:
         self.sub_manager = SubscriptionManager()
         self.running = True
 
-    def print_menu(self, items: List[Tuple[str, str]], title: str = ""):
+    def print_menu(self, items: List[Tuple[str, str]], title: str = "", zero_label: str = "返回上级"):
         print()
         if title:
             line()
@@ -782,7 +746,8 @@ class Menu:
             line()
         for num, label in items:
             c_print(f"  {num}. {label}", Colors.YELLOW)
-        c_print("  0. 返回上级/退出", Colors.YELLOW)
+        print()
+        c_print(f"  0. {zero_label}", Colors.YELLOW)
         print()
 
     def wait_back(self, prompt: str = "0. 返回上一级"):
@@ -1155,10 +1120,6 @@ WantedBy=multi-user.target
 
         line()
 
-    def restart_service(self):
-        subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False)
-        msg_info("代理服务已重启")
-
     def stop_service(self):
         subprocess.run(["systemctl", "stop", "mihomo-proxy"], check=False)
         msg_info("代理服务已停止")
@@ -1196,14 +1157,13 @@ WantedBy=multi-user.target
                 ("1", "订阅管理"),
                 ("2", "选择节点"),
                 ("3", "当前状态"),
-                ("4", "重启服务"),
-                ("5", "停止服务"),
-                ("6", "查看日志"),
-                ("7", "连通检测"),
-                ("8", "延迟检测"),
-                ("9", "直连模式"),
-                ("10", "卸载全部"),
-            ])
+                ("4", "停止服务"),
+                ("5", "查看日志"),
+                ("6", "连通检测"),
+                ("7", "延迟检测"),
+                ("8", "直连模式"),
+                ("9", "卸载全部"),
+            ], zero_label="退出")
 
             try:
                 choice = input("  请输入选项: ").strip()
@@ -1219,24 +1179,21 @@ WantedBy=multi-user.target
                 self.show_status()
                 self.wait_back()
             elif choice == "4":
-                self.restart_service()
-                self.wait_back()
-            elif choice == "5":
                 self.stop_service()
                 self.wait_back()
-            elif choice == "6":
+            elif choice == "5":
                 self.show_logs()
                 self.wait_back()
-            elif choice == "7":
+            elif choice == "6":
                 self.test_connectivity()
                 self.wait_back()
-            elif choice == "8":
+            elif choice == "7":
                 self.test_latency()
                 self.wait_back()
-            elif choice == "9":
+            elif choice == "8":
                 self.direct_mode()
                 self.wait_back()
-            elif choice == "10":
+            elif choice == "9":
                 self.uninstall()
                 self.wait_back()
             elif choice == "0":
@@ -1251,7 +1208,7 @@ WantedBy=multi-user.target
                 ("3", "查看订阅"),
                 ("4", "设为默认"),
                 ("5", "删除订阅"),
-            ], "订阅管理")
+            ], "订阅管理", zero_label="返回上级")
 
             try:
                 choice = input("  请输入选项: ").strip()
