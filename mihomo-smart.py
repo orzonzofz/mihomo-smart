@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from collections import OrderedDict
+import ipaddress
 
 # ============== 配置 ==============
 WORKDIR = Path("/etc/mihomo-smart")
@@ -27,6 +28,7 @@ AUTH_FILE = WORKDIR / "auth.txt"
 MODE_FILE = WORKDIR / "mode.txt"
 SUB_URLS_FILE = WORKDIR / "sub_urls.txt"
 SUB_DEFAULT_FILE = WORKDIR / "sub_default.txt"
+WHITELIST_FILE = WORKDIR / "whitelist.txt"
 
 HTTP_PORT = 18080
 SOCKS_PORT = 18081
@@ -771,6 +773,163 @@ class Menu:
             print()
             return ""
 
+    def ask_yes_no(self, prompt: str, default: bool = False) -> bool:
+        suffix = " (Y/n)" if default else " (y/N)"
+        print()
+        c_print(f"  {prompt}{suffix}", Colors.YELLOW)
+        try:
+            val = input("  请输入选项: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return default
+        if not val:
+            return default
+        return val in ("y", "yes")
+
+    def _iptables(self, args: List[str]) -> bool:
+        try:
+            return subprocess.run(["iptables"] + args, check=False).returncode == 0
+        except Exception:
+            return False
+
+    def _iptables_rule_exists(self, args: List[str]) -> bool:
+        try:
+            return subprocess.run(["iptables", "-C"] + args, check=False).returncode == 0
+        except Exception:
+            return False
+
+    def _apply_port_whitelist(self, ip: str) -> None:
+        if not self._iptables(["-n", "-L"]):
+            msg_warn("未检测到 iptables，无法设置白名单")
+            return
+
+        self.clear_whitelist()
+
+        for port in (HTTP_PORT, SOCKS_PORT):
+            accept_local = ["INPUT", "-p", "tcp", "-s", "127.0.0.1", "--dport", str(port), "-j", "ACCEPT"]
+            accept_ip = ["INPUT", "-p", "tcp", "-s", ip, "--dport", str(port), "-j", "ACCEPT"]
+            drop_other = ["INPUT", "-p", "tcp", "--dport", str(port), "-j", "DROP"]
+
+            if not self._iptables_rule_exists(accept_local):
+                self._iptables(["-I"] + accept_local)
+            if not self._iptables_rule_exists(accept_ip):
+                self._iptables(["-I"] + accept_ip)
+            if not self._iptables_rule_exists(drop_other):
+                self._iptables(["-A"] + drop_other)
+
+        WHITELIST_FILE.write_text(ip)
+        msg_info(f"白名单已生效，仅允许 {ip} 访问代理")
+
+    def clear_whitelist(self) -> None:
+        if not WHITELIST_FILE.exists():
+            return
+        ip = WHITELIST_FILE.read_text().strip()
+        if not ip:
+            WHITELIST_FILE.unlink(missing_ok=True)
+            return
+        if not self._iptables(["-n", "-L"]):
+            WHITELIST_FILE.unlink(missing_ok=True)
+            return
+
+        for port in (HTTP_PORT, SOCKS_PORT):
+            rules = [
+                ["INPUT", "-p", "tcp", "-s", "127.0.0.1", "--dport", str(port), "-j", "ACCEPT"],
+                ["INPUT", "-p", "tcp", "-s", ip, "--dport", str(port), "-j", "ACCEPT"],
+                ["INPUT", "-p", "tcp", "--dport", str(port), "-j", "DROP"],
+            ]
+            for rule in rules:
+                while self._iptables_rule_exists(rule):
+                    self._iptables(["-D"] + rule)
+
+        WHITELIST_FILE.unlink(missing_ok=True)
+
+    def whitelist_menu(self):
+        while True:
+            logo()
+            self.print_menu([
+                ("1", "查看白名单状态"),
+                ("2", "设置白名单"),
+                ("3", "清除白名单"),
+            ], "白名单管理", zero_label="返回上级")
+
+            choice = self.ask_choice("请选择操作编号:")
+            if not choice:
+                continue
+
+            if choice == "1":
+                self.show_whitelist_status()
+                self.wait_back()
+            elif choice == "2":
+                self.set_whitelist()
+                self.wait_back()
+            elif choice == "3":
+                self.clear_whitelist()
+                msg_info("白名单已清除")
+                self.wait_back()
+            elif choice == "0":
+                break
+
+    def show_whitelist_status(self):
+        print()
+        line()
+        msg_title("白名单状态：")
+        line()
+
+        mode = "订阅模式"
+        if MODE_FILE.exists() and MODE_FILE.read_text().strip() == "direct":
+            mode = "直连模式"
+        msg_info(f"当前模式：{mode}")
+        msg_info(f"生效端口：HTTP {HTTP_PORT} / SOCKS {SOCKS_PORT}")
+
+        if WHITELIST_FILE.exists():
+            ip = WHITELIST_FILE.read_text().strip()
+            if ip:
+                msg_info(f"当前白名单 IP：{ip}")
+                http_ok = self._iptables_rule_exists(
+                    ["INPUT", "-p", "tcp", "-s", ip, "--dport", str(HTTP_PORT), "-j", "ACCEPT"]
+                )
+                socks_ok = self._iptables_rule_exists(
+                    ["INPUT", "-p", "tcp", "-s", ip, "--dport", str(SOCKS_PORT), "-j", "ACCEPT"]
+                )
+                http_drop = self._iptables_rule_exists(
+                    ["INPUT", "-p", "tcp", "--dport", str(HTTP_PORT), "-j", "DROP"]
+                )
+                socks_drop = self._iptables_rule_exists(
+                    ["INPUT", "-p", "tcp", "--dport", str(SOCKS_PORT), "-j", "DROP"]
+                )
+                if http_ok and socks_ok:
+                    msg_info("iptables 规则：HTTP/SOCKS 已生效")
+                elif http_ok or socks_ok:
+                    msg_warn("iptables 规则：部分端口已生效")
+                else:
+                    msg_warn("iptables 规则：未检测到")
+                if http_drop and socks_drop:
+                    msg_info("拦截规则：HTTP/SOCKS 已启用")
+                elif http_drop or socks_drop:
+                    msg_warn("拦截规则：部分端口已启用")
+                else:
+                    msg_warn("拦截规则：未检测到")
+            else:
+                msg_warn("白名单文件为空")
+        else:
+            msg_warn("未启用白名单")
+
+        line()
+
+    def set_whitelist(self):
+        if MODE_FILE.exists() and MODE_FILE.read_text().strip() != "direct":
+            msg_warn("当前非直连模式，白名单将影响订阅代理端口")
+
+        if not self.ask_yes_no("确认设置白名单", default=False):
+            return
+
+        ip = self.ask_choice("请输入允许访问的 IP:")
+        try:
+            ipaddress.ip_address(ip)
+            self._apply_port_whitelist(ip)
+        except ValueError:
+            msg_warn("IP 格式无效，已取消设置")
+
     def show_subs(self):
         subs = self.sub_manager.get_saved_subs()
         default = self.sub_manager.get_default_sub()
@@ -954,6 +1113,7 @@ class Menu:
             print()
 
     def gen_service(self, active_node: str):
+        self.clear_whitelist()
         proxies = []
         if PROXY_YAML.exists():
             proxies = YAMLConverter.parse_proxies(PROXY_YAML.read_text())
@@ -1007,6 +1167,15 @@ WantedBy=multi-user.target
         CONFIG.write_text(config)
 
         MODE_FILE.write_text("direct")
+        self.clear_whitelist()
+
+        if self.ask_yes_no("搭建纯本地 HTTP 代理时加白名单", default=False):
+            ip = self.ask_choice("请输入允许访问的 IP:")
+            try:
+                ipaddress.ip_address(ip)
+                self._apply_port_whitelist(ip)
+            except ValueError:
+                msg_warn("IP 格式无效，已跳过白名单设置")
 
         service_content = f"""[Unit]
 Description=Mihomo Smart Proxy
@@ -1102,6 +1271,11 @@ WantedBy=multi-user.target
         line()
 
     def test_latency(self):
+        default = self.sub_manager.get_default_sub()
+        if default:
+            msg_info("正在同步默认订阅用于延迟检测...")
+            self.update_sub_direct(default)
+
         if not PROXY_FILE.exists():
             msg_warn("未找到节点，请先更新订阅")
             return
@@ -1174,7 +1348,8 @@ WantedBy=multi-user.target
                 ("6", "连通检测"),
                 ("7", "延迟检测"),
                 ("8", "直连模式"),
-                ("9", "卸载全部"),
+                ("9", "白名单管理"),
+                ("10", "卸载全部"),
             ], zero_label="退出")
 
             try:
@@ -1206,6 +1381,8 @@ WantedBy=multi-user.target
                 self.direct_mode()
                 self.wait_back()
             elif choice == "9":
+                self.whitelist_menu()
+            elif choice == "10":
                 self.uninstall()
                 self.wait_back()
             elif choice == "0":
