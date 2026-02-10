@@ -787,8 +787,9 @@ class Menu:
 
     def wait_back(self, prompt: str = "0. 返回上一级"):
         while True:
+            c_print(f"  {prompt}", Colors.YELLOW)
             try:
-                v = input(f"  {prompt} ").strip()
+                v = input("  请输入选项: ").strip()
                 if v == "0":
                     break
             except (EOFError, KeyboardInterrupt):
