@@ -222,6 +222,320 @@ class YAMLConverter:
         except:
             return None
 
+# ============== 节点列表解析 ==============
+class NodeListConverter:
+    """节点列表（v2rayN）转换器"""
+
+    SCHEMES = ("vless://", "vmess://", "ss://")
+
+    @staticmethod
+    def is_node_list(content: str) -> bool:
+        for line in content.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith(NodeListConverter.SCHEMES):
+                return True
+        return False
+
+    @staticmethod
+    def _b64decode(s: str) -> bytes:
+        s = s.strip().replace("-", "+").replace("_", "/")
+        s += "=" * (-len(s) % 4)
+        return base64.b64decode(s)
+
+    @staticmethod
+    def _yaml_scalar(val: Any) -> Any:
+        if isinstance(val, bool):
+            return bool(val)
+        if isinstance(val, int):
+            return int(val)
+        return str(val)
+
+    @staticmethod
+    def _parse_hostport(hp: str) -> Optional[Tuple[str, int]]:
+        if hp.startswith("[") and "]" in hp:
+            host = hp[1:hp.index("]")]
+            rest = hp[hp.index("]") + 1:]
+            if rest.startswith(":"):
+                rest = rest[1:]
+            port = int(rest) if rest else None
+            return (host, port) if port else None
+        if hp.count(":") == 1:
+            host, port = hp.split(":", 1)
+            return host, int(port)
+        u = urllib.parse.urlsplit("ss://" + hp)
+        if u.hostname and u.port:
+            return u.hostname, int(u.port)
+        return None
+
+    @staticmethod
+    def _ensure_name(name: str, fallback: str, used: set) -> str:
+        name = (name or "").strip() or fallback
+        base = name
+        idx = 2
+        while name in used:
+            name = f"{base}-{idx}"
+            idx += 1
+        used.add(name)
+        return name
+
+    @staticmethod
+    def _parse_vmess(line: str) -> Optional[OrderedDict]:
+        raw = line[8:]
+        try:
+            data = NodeListConverter._b64decode(raw)
+            js = json.loads(data.decode("utf-8", errors="ignore"))
+        except Exception:
+            return None
+        server = js.get("add") or ""
+        port = js.get("port")
+        uuid = js.get("id") or ""
+        if not server or not port or not uuid:
+            return None
+        p = OrderedDict()
+        p["name"] = js.get("ps") or ""
+        p["type"] = "vmess"
+        p["server"] = server
+        try:
+            p["port"] = int(port)
+        except Exception:
+            return None
+        p["uuid"] = uuid
+        aid = js.get("aid", 0)
+        try:
+            p["alterId"] = int(aid)
+        except Exception:
+            p["alterId"] = 0
+        p["cipher"] = js.get("scy") or js.get("cipher") or "auto"
+        p["udp"] = True
+        net = (js.get("net") or "tcp").lower()
+        if net and net != "tcp":
+            p["network"] = net
+        tls = (js.get("tls") or "").lower()
+        if tls in ("tls", "1", "true"):
+            p["tls"] = True
+        sni = js.get("sni") or ""
+        if sni:
+            p["servername"] = sni
+        alpn = js.get("alpn") or ""
+        if alpn:
+            p["alpn"] = [x.strip() for x in str(alpn).split(",") if x.strip()]
+        fp = js.get("fp") or ""
+        if fp:
+            p["fingerprint"] = fp
+        host = js.get("host") or ""
+        path = js.get("path") or ""
+        if net == "ws":
+            ws_opts = OrderedDict()
+            if path:
+                ws_opts["path"] = path
+            headers = OrderedDict()
+            if host:
+                headers["Host"] = host
+            if headers:
+                ws_opts["headers"] = headers
+            if ws_opts:
+                p["ws-opts"] = ws_opts
+        if net == "grpc":
+            grpc_opts = OrderedDict()
+            svc = js.get("serviceName") or path
+            if svc:
+                grpc_opts["grpc-service-name"] = svc
+            if grpc_opts:
+                p["grpc-opts"] = grpc_opts
+        return p
+
+    @staticmethod
+    def _parse_vless(line: str) -> Optional[OrderedDict]:
+        try:
+            u = urllib.parse.urlsplit(line)
+        except Exception:
+            return None
+        if not u.hostname or not u.port or not u.username:
+            return None
+        params = urllib.parse.parse_qs(u.query, keep_blank_values=True)
+        def q(key: str) -> str:
+            return params.get(key, [""])[0]
+        p = OrderedDict()
+        p["name"] = urllib.parse.unquote(u.fragment or "")
+        p["type"] = "vless"
+        p["server"] = u.hostname
+        p["port"] = int(u.port)
+        p["uuid"] = u.username
+        p["udp"] = True
+        enc = q("encryption") or "none"
+        p["encryption"] = enc
+        flow = q("flow")
+        if flow:
+            p["flow"] = flow
+        net = (q("type") or q("transport") or "tcp").lower()
+        if net and net != "tcp":
+            p["network"] = net
+        if net == "ws":
+            ws_opts = OrderedDict()
+            path = q("path")
+            if path:
+                ws_opts["path"] = path
+            host = q("host")
+            headers = OrderedDict()
+            if host:
+                headers["Host"] = host
+            if headers:
+                ws_opts["headers"] = headers
+            if ws_opts:
+                p["ws-opts"] = ws_opts
+        if net == "grpc":
+            grpc_opts = OrderedDict()
+            svc = q("serviceName") or q("service") or q("grpc-service-name")
+            if svc:
+                grpc_opts["grpc-service-name"] = svc
+            if grpc_opts:
+                p["grpc-opts"] = grpc_opts
+        sec = (q("security") or "").lower()
+        if sec in ("tls", "reality", "xtls"):
+            p["tls"] = True
+            sni = q("sni") or q("serverName") or q("servername")
+            if sni:
+                p["servername"] = sni
+            alpn = q("alpn")
+            if alpn:
+                p["alpn"] = [x.strip() for x in alpn.split(",") if x.strip()]
+            fp = q("fp")
+            if fp:
+                p["fingerprint"] = fp
+            if sec == "reality":
+                ropts = OrderedDict()
+                pbk = q("pbk") or q("publicKey") or q("public-key")
+                sid = q("sid") or q("shortId") or q("short-id")
+                if pbk:
+                    ropts["public-key"] = pbk
+                if sid:
+                    ropts["short-id"] = sid
+                if ropts:
+                    p["reality-opts"] = ropts
+        return p
+
+    @staticmethod
+    def _parse_ss(line: str) -> Optional[OrderedDict]:
+        rest = line[5:]
+        name = ""
+        if "#" in rest:
+            rest, frag = rest.split("#", 1)
+            name = urllib.parse.unquote(frag)
+        plugin = ""
+        if "?" in rest:
+            rest, query = rest.split("?", 1)
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            plugin = params.get("plugin", [""])[0]
+        method = password = None
+        hostport = ""
+        if "@" in rest:
+            userinfo, hostport = rest.rsplit("@", 1)
+            if ":" in userinfo:
+                method, password = userinfo.split(":", 1)
+            else:
+                try:
+                    decoded = NodeListConverter._b64decode(userinfo).decode("utf-8", errors="ignore")
+                    if ":" in decoded:
+                        method, password = decoded.split(":", 1)
+                    else:
+                        return None
+                except Exception:
+                    return None
+        else:
+            try:
+                decoded = NodeListConverter._b64decode(rest).decode("utf-8", errors="ignore")
+            except Exception:
+                return None
+            if "@" not in decoded or ":" not in decoded:
+                return None
+            userinfo, hostport = decoded.rsplit("@", 1)
+            method, password = userinfo.split(":", 1)
+        hp = NodeListConverter._parse_hostport(hostport)
+        if not hp or not method:
+            return None
+        host, port = hp
+        method = urllib.parse.unquote(method)
+        password = urllib.parse.unquote(password or "")
+        p = OrderedDict()
+        p["name"] = name
+        p["type"] = "ss"
+        p["server"] = host
+        p["port"] = int(port)
+        p["cipher"] = method
+        p["password"] = password
+        p["udp"] = True
+        if plugin:
+            plugin = urllib.parse.unquote(plugin)
+            parts = plugin.split(";")
+            pname = parts[0]
+            opts_raw = parts[1:]
+            opts = OrderedDict()
+            for item in opts_raw:
+                if not item:
+                    continue
+                if "=" in item:
+                    k, v = item.split("=", 1)
+                    opts[k] = v
+                else:
+                    opts[item] = True
+            if pname in ("simple-obfs", "obfs-local"):
+                pname = "obfs"
+            if pname in ("v2ray", "v2ray-plugin"):
+                pname = "v2ray-plugin"
+            p["plugin"] = pname
+            if pname == "obfs":
+                opts2 = OrderedDict()
+                if "obfs" in opts:
+                    opts2["mode"] = opts["obfs"]
+                if "mode" in opts:
+                    opts2["mode"] = opts["mode"]
+                if "obfs-host" in opts:
+                    opts2["host"] = opts["obfs-host"]
+                if "host" in opts:
+                    opts2["host"] = opts["host"]
+                if opts2:
+                    p["plugin-opts"] = opts2
+            elif pname == "v2ray-plugin":
+                opts2 = OrderedDict()
+                if "mode" in opts:
+                    opts2["mode"] = opts["mode"]
+                if "host" in opts:
+                    opts2["host"] = opts["host"]
+                if "path" in opts:
+                    opts2["path"] = opts["path"]
+                if "tls" in opts:
+                    opts2["tls"] = True
+                if opts2:
+                    p["plugin-opts"] = opts2
+            else:
+                if opts:
+                    p["plugin-opts"] = opts
+        return p
+
+    @staticmethod
+    def parse_nodes(content: str) -> List[Dict[str, Any]]:
+        proxies: List[Dict[str, Any]] = []
+        used_names = set()
+        for line in content.splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            p = None
+            if s.startswith("vmess://"):
+                p = NodeListConverter._parse_vmess(s)
+            elif s.startswith("vless://"):
+                p = NodeListConverter._parse_vless(s)
+            elif s.startswith("ss://"):
+                p = NodeListConverter._parse_ss(s)
+            if not p:
+                continue
+            fallback = f"{p.get('type', 'node')}-{p.get('server', '')}:{p.get('port', '')}"
+            p["name"] = NodeListConverter._ensure_name(p.get("name") or "", fallback, used_names)
+            proxies.append(p)
+        return proxies
+
 # ============== 订阅管理 ==============
 class SubscriptionManager:
     """订阅管理器"""
@@ -259,10 +573,16 @@ class SubscriptionManager:
         content = YAMLConverter.normalize(content)
 
         if 'proxies:' not in content:
+            if NodeListConverter.is_node_list(content):
+                proxies = NodeListConverter.parse_nodes(content)
+                return proxies if proxies else None
             decoded = YAMLConverter.b64_decode(content.encode())
             if decoded:
                 content = decoded.decode('utf-8', errors='ignore')
                 content = YAMLConverter.normalize(content)
+                if 'proxies:' not in content and NodeListConverter.is_node_list(content):
+                    proxies = NodeListConverter.parse_nodes(content)
+                    return proxies if proxies else None
 
         if 'proxies:' not in content:
             return None
