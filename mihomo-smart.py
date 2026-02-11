@@ -10,6 +10,7 @@ import sys
 import re
 import json
 import base64
+import time
 import subprocess
 import urllib.parse
 import urllib.request
@@ -788,13 +789,23 @@ class Menu:
 
     def _iptables(self, args: List[str]) -> bool:
         try:
-            return subprocess.run(["iptables"] + args, check=False).returncode == 0
+            return subprocess.run(
+                ["iptables"] + args,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode == 0
         except Exception:
             return False
 
     def _iptables_rule_exists(self, args: List[str]) -> bool:
         try:
-            return subprocess.run(["iptables", "-C"] + args, check=False).returncode == 0
+            return subprocess.run(
+                ["iptables", "-C"] + args,
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            ).returncode == 0
         except Exception:
             return False
 
@@ -842,6 +853,50 @@ class Menu:
                     self._iptables(["-D"] + rule)
 
         WHITELIST_FILE.unlink(missing_ok=True)
+
+    def _restart_service_and_check(self) -> bool:
+        subprocess.run(["systemctl", "daemon-reload"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["systemctl", "enable", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        restart = subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.6)
+        is_active = subprocess.run(
+            ["systemctl", "is-active", "mihomo-proxy"],
+            capture_output=True,
+            text=True,
+        ).returncode == 0
+        if restart.returncode != 0 or not is_active:
+            msg_err("代理服务启动失败")
+            err = self._get_service_error()
+            if err:
+                msg_warn(f"失败原因：{err}")
+            msg_warn("请在菜单选择“查看日志”排查原因")
+            return False
+        return True
+
+    def _get_service_error(self) -> str:
+        try:
+            result = subprocess.check_output(
+                ["journalctl", "-u", "mihomo-proxy", "-n", "5", "--no-pager"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except Exception:
+            result = ""
+        if not result:
+            try:
+                result = subprocess.check_output(
+                    ["systemctl", "status", "mihomo-proxy", "--no-pager", "-l"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                ).strip()
+            except Exception:
+                result = ""
+        if not result:
+            return ""
+        lines = [line.strip() for line in result.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        return lines[-1][:200]
 
     def whitelist_menu(self):
         while True:
@@ -1141,9 +1196,7 @@ WantedBy=multi-user.target
         service_file = Path("/etc/systemd/system/mihomo-proxy.service")
         service_file.write_text(service_content)
 
-        subprocess.run(["systemctl", "daemon-reload"], check=False)
-        subprocess.run(["systemctl", "enable", "mihomo-proxy"], check=False)
-        subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False)
+        self._restart_service_and_check()
 
         ip = get_public_ip()
         is_active = subprocess.run(
@@ -1191,9 +1244,7 @@ WantedBy=multi-user.target
 
         Path("/etc/systemd/system/mihomo-proxy.service").write_text(service_content)
 
-        subprocess.run(["systemctl", "daemon-reload"], check=False)
-        subprocess.run(["systemctl", "enable", "mihomo-proxy"], check=False)
-        subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False)
+        self._restart_service_and_check()
 
         ip = get_public_ip()
         print()
@@ -1225,7 +1276,7 @@ WantedBy=multi-user.target
             capture_output=True
         ).returncode == 0
 
-        status = Colors.GREEN + "运行中" + Colors.RESET if is_active else Colors.RED + "已停止" + Colors.RESET
+        status = Colors.GREEN + "运行中" + Colors.RESET if is_active else Colors.RED + "已停止（请查看日志）" + Colors.RESET
         c_print(f"  服务状态：{status}", Colors.CYAN)
         line()
         c_print(f"  HTTP  : http://{USER}:{PASS}@{ip}:{HTTP_PORT}", Colors.CYAN)
