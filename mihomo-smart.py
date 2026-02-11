@@ -127,14 +127,6 @@ class YAMLConverter:
         if content.startswith('\ufeff'):
             content = content[1:]
         content = content.replace('\r\n', '\n').replace('\r', '\n')
-
-        def convert_inline(match):
-            indent = len(match.group(1))
-            items = match.group(2)
-            lines = [" " * (indent + 2) + item.strip() for item in items.split(",")]
-            return " " * indent + "-\n" + "\n".join(lines)
-
-        content = re.sub(r'^(\s*)-\s*\{([^}]+)\}', convert_inline, content, flags=re.MULTILINE)
         return content
 
     @staticmethod
@@ -238,6 +230,57 @@ class YAMLConverter:
             out.append(line.rstrip())
 
         return "\n".join(out).strip()
+
+    @staticmethod
+    def extract_provider_urls(content: str) -> List[str]:
+        urls: List[str] = []
+        lines = content.splitlines()
+        in_block = False
+        base_indent = None
+
+        for line in lines:
+            if not in_block:
+                m = re.match(r'^(\s*)proxy-providers\s*:\s*$', line)
+                if m:
+                    in_block = True
+                    base_indent = len(m.group(1))
+                continue
+            if line.strip() == "":
+                continue
+            indent = len(line) - len(line.lstrip())
+            if indent <= (base_indent or 0):
+                break
+            m = re.match(r'^\s*url\s*:\s*(.+)\s*$', line)
+            if not m:
+                continue
+            val = m.group(1).strip()
+            if (val.startswith(("'", '"')) and val.endswith(("'", '"')) and len(val) >= 2):
+                val = val[1:-1]
+            if val:
+                urls.append(val)
+        return urls
+
+    @staticmethod
+    def extract_proxies_items(block: str) -> List[str]:
+        lines = block.splitlines()
+        out: List[str] = []
+        in_block = False
+        base_indent = None
+        for line in lines:
+            if not in_block:
+                m = re.match(r'^(\s*)proxies\s*:\s*$', line)
+                if m:
+                    in_block = True
+                    base_indent = len(m.group(1))
+                continue
+            if line.strip() == "":
+                continue
+            indent = len(line) - len(line.lstrip(' '))
+            if indent <= (base_indent or 0) and not line.lstrip().startswith('-'):
+                break
+            rel = line[base_indent + 2:] if indent >= (base_indent or 0) + 2 else line.lstrip()
+            out.append("  " + rel.rstrip())
+        return out
 
     @staticmethod
     def extract_proxy_names(content: str) -> List[str]:
@@ -629,6 +672,50 @@ class SubscriptionManager:
         if result:
             return result
 
+        provider_urls = YAMLConverter.extract_provider_urls(content)
+        if provider_urls:
+            combined: List[str] = []
+            for purl in provider_urls:
+                sub_content = None
+                for ua in ["Mihomo", "Clash", "Clash for Windows", "clash.meta", "Mozilla/5.0"]:
+                    sub_content = self.fetch(purl, ua)
+                    if sub_content:
+                        break
+                if not sub_content:
+                    continue
+                sub_content = YAMLConverter.normalize(sub_content)
+                sub_result = build_result_from_yaml(sub_content)
+                if sub_result and sub_result.get("proxies_yaml"):
+                    items = YAMLConverter.extract_proxies_items(sub_result["proxies_yaml"])
+                    combined.extend(items)
+                    continue
+                if NodeListConverter.is_node_list(sub_content):
+                    proxies = NodeListConverter.parse_nodes(sub_content)
+                    if proxies:
+                        proxies_yaml = ConfigGenerator.proxies_to_yaml(proxies)
+                        items = YAMLConverter.extract_proxies_items(proxies_yaml)
+                        combined.extend(items)
+                        continue
+                decoded = YAMLConverter.b64_decode(sub_content.encode())
+                if decoded:
+                    decoded_text = YAMLConverter.normalize(decoded.decode('utf-8', errors='ignore'))
+                    sub_result = build_result_from_yaml(decoded_text)
+                    if sub_result and sub_result.get("proxies_yaml"):
+                        items = YAMLConverter.extract_proxies_items(sub_result["proxies_yaml"])
+                        combined.extend(items)
+                        continue
+                    if NodeListConverter.is_node_list(decoded_text):
+                        proxies = NodeListConverter.parse_nodes(decoded_text)
+                        if proxies:
+                            proxies_yaml = ConfigGenerator.proxies_to_yaml(proxies)
+                            items = YAMLConverter.extract_proxies_items(proxies_yaml)
+                            combined.extend(items)
+            if combined:
+                proxies_yaml = "proxies:\n" + "\n".join(combined) + "\n"
+                names = YAMLConverter.extract_proxy_names(proxies_yaml)
+                if names:
+                    return {"proxies_yaml": proxies_yaml, "names": names, "proxies": None}
+
         if NodeListConverter.is_node_list(content):
             proxies = NodeListConverter.parse_nodes(content)
             if proxies:
@@ -641,6 +728,49 @@ class SubscriptionManager:
             result = build_result_from_yaml(decoded_text)
             if result:
                 return result
+            provider_urls = YAMLConverter.extract_provider_urls(decoded_text)
+            if provider_urls:
+                combined: List[str] = []
+                for purl in provider_urls:
+                    sub_content = None
+                    for ua in ["Mihomo", "Clash", "Clash for Windows", "clash.meta", "Mozilla/5.0"]:
+                        sub_content = self.fetch(purl, ua)
+                        if sub_content:
+                            break
+                    if not sub_content:
+                        continue
+                    sub_content = YAMLConverter.normalize(sub_content)
+                    sub_result = build_result_from_yaml(sub_content)
+                    if sub_result and sub_result.get("proxies_yaml"):
+                        items = YAMLConverter.extract_proxies_items(sub_result["proxies_yaml"])
+                        combined.extend(items)
+                        continue
+                    if NodeListConverter.is_node_list(sub_content):
+                        proxies = NodeListConverter.parse_nodes(sub_content)
+                        if proxies:
+                            proxies_yaml = ConfigGenerator.proxies_to_yaml(proxies)
+                            items = YAMLConverter.extract_proxies_items(proxies_yaml)
+                            combined.extend(items)
+                            continue
+                    decoded2 = YAMLConverter.b64_decode(sub_content.encode())
+                    if decoded2:
+                        decoded_text2 = YAMLConverter.normalize(decoded2.decode('utf-8', errors='ignore'))
+                        sub_result = build_result_from_yaml(decoded_text2)
+                        if sub_result and sub_result.get("proxies_yaml"):
+                            items = YAMLConverter.extract_proxies_items(sub_result["proxies_yaml"])
+                            combined.extend(items)
+                            continue
+                        if NodeListConverter.is_node_list(decoded_text2):
+                            proxies = NodeListConverter.parse_nodes(decoded_text2)
+                            if proxies:
+                                proxies_yaml = ConfigGenerator.proxies_to_yaml(proxies)
+                                items = YAMLConverter.extract_proxies_items(proxies_yaml)
+                                combined.extend(items)
+                if combined:
+                    proxies_yaml = "proxies:\n" + "\n".join(combined) + "\n"
+                    names = YAMLConverter.extract_proxy_names(proxies_yaml)
+                    if names:
+                        return {"proxies_yaml": proxies_yaml, "names": names, "proxies": None}
             if NodeListConverter.is_node_list(decoded_text):
                 proxies = NodeListConverter.parse_nodes(decoded_text)
                 if proxies:
@@ -732,6 +862,13 @@ class NodeTester:
             if (f'name: "{node_name}"' in line or f"name: '{node_name}'" in line
                     or f"name: {node_name}" in line):
                 in_node = True
+                if "{" in line and "}" in line:
+                    m_host = re.search(r'\bserver\s*:\s*([^,}]+)', line)
+                    m_port = re.search(r'\bport\s*:\s*(\d+)', line)
+                    if m_host and m_port:
+                        host = m_host.group(1).strip().strip('"').strip("'")
+                        port = int(m_port.group(1))
+                        return host, port
                 continue
 
             if in_node:
@@ -743,6 +880,13 @@ class NodeTester:
                     m = re.search(r'port:\s*(\d+)', line)
                     if m:
                         port = int(m.group(1))
+                elif "{" in line and "}" in line:
+                    m_host = re.search(r'\bserver\s*:\s*([^,}]+)', line)
+                    m_port = re.search(r'\bport\s*:\s*(\d+)', line)
+                    if m_host:
+                        host = m_host.group(1).strip().strip('"').strip("'")
+                    if m_port:
+                        port = int(m_port.group(1))
                 elif host and port:
                     return host, port
                 if line.strip().startswith('- name:'):
@@ -766,6 +910,38 @@ class ConfigGenerator:
         s = str(val)
         s = s.replace("\\", "\\\\").replace('"', '\\"')
         return f"\"{s}\""
+
+    @staticmethod
+    def proxies_to_yaml(proxies: List[Dict[str, Any]]) -> str:
+        lines = ["proxies:"]
+        for proxy in proxies:
+            name = proxy.get('name', '')
+            if not name:
+                continue
+            lines.append(f"  - name: \"{name}\"")
+            for k, v in proxy.items():
+                if k == 'name':
+                    continue
+                if isinstance(v, bool):
+                    lines.append(f"    {k}: {str(v).lower()}")
+                elif isinstance(v, dict):
+                    lines.append(f"    {k}:")
+                    for kk, vv in v.items():
+                        if isinstance(vv, bool):
+                            lines.append(f"      {kk}: {str(vv).lower()}")
+                        elif isinstance(vv, list):
+                            lines.append(f"      {kk}:")
+                            for item in vv:
+                                lines.append(f"        - {ConfigGenerator.yaml_scalar(item)}")
+                        else:
+                            lines.append(f"      {kk}: {ConfigGenerator.yaml_scalar(vv)}")
+                elif isinstance(v, list):
+                    lines.append(f"    {k}:")
+                    for item in v:
+                        lines.append(f"      - {ConfigGenerator.yaml_scalar(item)}")
+                else:
+                    lines.append(f"    {k}: {ConfigGenerator.yaml_scalar(v)}")
+        return "\n".join(lines) + "\n"
 
     def gen_config(self, active_node: str) -> str:
         lines = [
@@ -1237,35 +1413,7 @@ class Menu:
         if proxies_yaml:
             PROXY_YAML.write_text(proxies_yaml.rstrip() + "\n")
         elif proxies:
-            with open(PROXY_YAML, 'w') as f:
-                f.write("proxies:\n")
-                for proxy in proxies:
-                    name = proxy.get('name', '')
-                    if not name:
-                        continue
-                    f.write(f"  - name: \"{name}\"\n")
-                    for k, v in proxy.items():
-                        if k == 'name':
-                            continue
-                        if isinstance(v, bool):
-                            f.write(f"    {k}: {str(v).lower()}\n")
-                        elif isinstance(v, dict):
-                            f.write(f"    {k}:\n")
-                            for kk, vv in v.items():
-                                if isinstance(vv, bool):
-                                    f.write(f"      {kk}: {str(vv).lower()}\n")
-                                elif isinstance(vv, list):
-                                    f.write(f"      {kk}:\n")
-                                    for item in vv:
-                                        f.write(f"        - {ConfigGenerator.yaml_scalar(item)}\n")
-                                else:
-                                    f.write(f"      {kk}: {ConfigGenerator.yaml_scalar(vv)}\n")
-                        elif isinstance(v, list):
-                            f.write(f"    {k}:\n")
-                            for item in v:
-                                f.write(f"      - {ConfigGenerator.yaml_scalar(item)}\n")
-                        else:
-                            f.write(f"    {k}: {ConfigGenerator.yaml_scalar(v)}\n")
+            PROXY_YAML.write_text(ConfigGenerator.proxies_to_yaml(proxies))
         else:
             msg_err("订阅解析失败或返回空节点")
             return
