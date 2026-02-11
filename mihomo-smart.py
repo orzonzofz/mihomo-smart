@@ -1238,6 +1238,7 @@ class Menu:
 
         subprocess.run(["systemctl", "daemon-reload"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["systemctl", "enable", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["systemctl", "stop", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         restart = subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.6)
         is_active = subprocess.run(
