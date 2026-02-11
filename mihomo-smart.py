@@ -1542,6 +1542,7 @@ class Menu:
 
     def gen_service(self, active_node: str):
         self.clear_whitelist()
+        MODE_FILE.write_text("proxy")
         if not PROXY_YAML.exists() or not PROXY_YAML.read_text().strip():
             msg_warn("未找到节点配置")
             return
