@@ -145,6 +145,20 @@ class YAMLConverter:
         base_indent = 0
         current_proxy = None
 
+        def parse_scalar(val: str) -> Any:
+            s = val.strip()
+            lower = s.lower()
+            if lower == "true":
+                return True
+            if lower == "false":
+                return False
+            if re.fullmatch(r"-?\d+", s):
+                try:
+                    return int(s)
+                except Exception:
+                    return s
+            return s
+
         lines = content.split('\n')
         for line in lines:
             if not in_proxies:
@@ -193,7 +207,7 @@ class YAMLConverter:
                         val = val[1:-1]
                     elif val.startswith("'") and val.endswith("'"):
                         val = val[1:-1]
-                    current_proxy[key] = val
+                    current_proxy[key] = parse_scalar(val)
 
         if current_proxy:
             proxies.append(current_proxy)
