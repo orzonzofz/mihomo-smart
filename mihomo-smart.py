@@ -169,6 +169,19 @@ class YAMLConverter:
                 if current_proxy:
                     proxies.append(current_proxy)
                 current_proxy = {}
+                rest = stripped[1:].strip()
+                if rest and ':' in rest:
+                    key, val = rest.split(':', 1)
+                    key = key.strip()
+                    val = val.strip()
+                    if val.startswith('"') and '"' in val[1:]:
+                        val = val[1:val.index('"', 1)]
+                    elif val.startswith("'") and "'" in val[1:]:
+                        val = val[1:val.index("'", 1)]
+                    else:
+                        val = re.split(r'[},#]', val)[0].strip()
+                    if key and val:
+                        current_proxy[key] = val
                 continue
 
             if current_proxy is not None and ':' in stripped:
