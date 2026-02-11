@@ -677,6 +677,16 @@ class ConfigGenerator:
     def __init__(self, proxies: List[Dict[str, Any]]):
         self.proxies = proxies
 
+    @staticmethod
+    def yaml_scalar(val: Any) -> str:
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return str(val)
+        s = str(val)
+        s = s.replace("\\", "\\\\").replace('"', '\\"')
+        return f"\"{s}\""
+
     def gen_config(self, active_node: str) -> str:
         lines = [
             f"port: {HTTP_PORT}",
@@ -710,15 +720,15 @@ class ConfigGenerator:
                         elif isinstance(vv, list):
                             lines.append(f"      {kk}:")
                             for item in vv:
-                                lines.append(f"        - {item}")
+                                lines.append(f"        - {self.yaml_scalar(item)}")
                         else:
-                            lines.append(f"      {kk}: {vv}")
+                            lines.append(f"      {kk}: {self.yaml_scalar(vv)}")
                 elif isinstance(v, list):
                     lines.append(f"    {k}:")
                     for item in v:
-                        lines.append(f"      - {item}")
+                        lines.append(f"      - {self.yaml_scalar(item)}")
                 else:
-                    lines.append(f"    {k}: {v}")
+                    lines.append(f"    {k}: {self.yaml_scalar(v)}")
 
         lines.extend([
             "",
@@ -1135,15 +1145,15 @@ class Menu:
                             elif isinstance(vv, list):
                                 f.write(f"      {kk}:\n")
                                 for item in vv:
-                                    f.write(f"        - {item}\n")
+                                    f.write(f"        - {ConfigGenerator.yaml_scalar(item)}\n")
                             else:
-                                f.write(f"      {kk}: {vv}\n")
+                                f.write(f"      {kk}: {ConfigGenerator.yaml_scalar(vv)}\n")
                     elif isinstance(v, list):
                         f.write(f"    {k}:\n")
                         for item in v:
-                            f.write(f"      - {item}\n")
+                            f.write(f"      - {ConfigGenerator.yaml_scalar(item)}\n")
                     else:
-                        f.write(f"    {k}: {v}\n")
+                        f.write(f"    {k}: {ConfigGenerator.yaml_scalar(v)}\n")
 
         msg_info(f"解析完成，节点数量：{len(names)}")
 
