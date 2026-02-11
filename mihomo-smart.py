@@ -740,6 +740,8 @@ class Menu:
     def __init__(self):
         self.sub_manager = SubscriptionManager()
         self.running = True
+        self.last_service_active: Optional[bool] = None
+        self.last_service_error: str = ""
 
     def print_menu(self, items: List[Tuple[str, str]], title: str = "", zero_label: str = "返回上级"):
         print()
@@ -855,6 +857,24 @@ class Menu:
         WHITELIST_FILE.unlink(missing_ok=True)
 
     def _restart_service_and_check(self) -> bool:
+        test = subprocess.run(
+            ["mihomo", "-t", "-d", str(WORKDIR), "-f", str(CONFIG)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if test.returncode != 0:
+            msg_err("配置自检失败，已取消启动服务")
+            output = (test.stdout or "").strip()
+            if output:
+                lines = [line.strip() for line in output.splitlines() if line.strip()]
+                msg_warn("自检输出：")
+                for line in lines[-3:]:
+                    msg_warn(f"  {line[:200]}")
+            self.last_service_active = False
+            self.last_service_error = "\n".join((test.stdout or "").splitlines()[-3:])
+            return False
+
         subprocess.run(["systemctl", "daemon-reload"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         subprocess.run(["systemctl", "enable", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         restart = subprocess.run(["systemctl", "restart", "mihomo-proxy"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -864,11 +884,16 @@ class Menu:
             capture_output=True,
             text=True,
         ).returncode == 0
+        self.last_service_active = is_active and restart.returncode == 0
+        self.last_service_error = ""
         if restart.returncode != 0 or not is_active:
             msg_err("代理服务启动失败")
             err = self._get_service_error()
             if err:
-                msg_warn(f"失败原因：{err}")
+                self.last_service_error = err
+                msg_warn("失败原因：")
+                for line in err.splitlines():
+                    msg_warn(f"  {line}")
             msg_warn("请在菜单选择“查看日志”排查原因")
             return False
         return True
@@ -876,7 +901,7 @@ class Menu:
     def _get_service_error(self) -> str:
         try:
             result = subprocess.check_output(
-                ["journalctl", "-u", "mihomo-proxy", "-n", "5", "--no-pager"],
+                ["journalctl", "-u", "mihomo-proxy", "-n", "20", "--no-pager"],
                 text=True,
                 stderr=subprocess.DEVNULL,
             ).strip()
@@ -896,7 +921,12 @@ class Menu:
         lines = [line.strip() for line in result.splitlines() if line.strip()]
         if not lines:
             return ""
-        return lines[-1][:200]
+        keywords = ("error", "failed", "fatal", "panic")
+        for line in reversed(lines):
+            lower = line.lower()
+            if any(k in lower for k in keywords):
+                return line[-200:]
+        return "\n".join(lines[-3:])[:400]
 
     def whitelist_menu(self):
         while True:
@@ -1271,11 +1301,13 @@ WantedBy=multi-user.target
         line()
 
         ip = get_public_ip()
-        is_active = subprocess.run(
-            ["systemctl", "is-active", "mihomo-proxy"],
-            capture_output=True
-        ).returncode == 0
-
+        if self.last_service_active is None:
+            is_active = subprocess.run(
+                ["systemctl", "is-active", "mihomo-proxy"],
+                capture_output=True
+            ).returncode == 0
+        else:
+            is_active = self.last_service_active
         status = Colors.GREEN + "运行中" + Colors.RESET if is_active else Colors.RED + "已停止（请查看日志）" + Colors.RESET
         c_print(f"  服务状态：{status}", Colors.CYAN)
         line()
