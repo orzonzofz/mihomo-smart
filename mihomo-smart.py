@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from collections import OrderedDict
 import ipaddress
+import importlib
+try:
+    import yaml  # type: ignore
+except Exception:
+    yaml = None
 
 # ============== 配置 ==============
 WORKDIR = Path("/etc/mihomo-smart")
@@ -127,6 +132,24 @@ class YAMLConverter:
         if content.startswith('\ufeff'):
             content = content[1:]
         content = content.replace('\r\n', '\n').replace('\r', '\n')
+        lines = []
+        for line in content.split('\n'):
+            m = re.match(r'^(\s*proxies\s*:\s*)(.+)$', line)
+            if m:
+                head = m.group(1).strip()
+                tail = m.group(2).strip()
+                if tail:
+                    if tail.startswith("#"):
+                        lines.append(head)
+                        continue
+                    tail = re.sub(r'\s+-\s+', '\n  - ', tail)
+                    if not tail.startswith('-'):
+                        tail = "- " + tail
+                    lines.append(head)
+                    lines.append("  " + tail.lstrip("- ").strip() if tail.startswith("- ") else "  " + tail)
+                    continue
+            lines.append(line)
+        content = "\n".join(lines)
         return content
 
     @staticmethod
@@ -655,8 +678,6 @@ class SubscriptionManager:
         if not content:
             return None
 
-        content = YAMLConverter.normalize(content)
-
         def build_result_from_yaml(text: str) -> Optional[Dict[str, Any]]:
             if 'proxies:' not in text:
                 return None
@@ -667,6 +688,38 @@ class SubscriptionManager:
             if not names:
                 return None
             return {"proxies_yaml": proxies_yaml, "names": names, "proxies": None}
+
+        def build_result_from_pyyaml(text: str) -> Optional[Dict[str, Any]]:
+            if yaml is None:
+                return None
+            try:
+                data = yaml.safe_load(text)
+            except Exception:
+                return None
+            if not isinstance(data, dict):
+                return None
+            proxies = data.get("proxies")
+            if not isinstance(proxies, list) or not proxies:
+                return None
+            names = []
+            for item in proxies:
+                if isinstance(item, dict) and item.get("name"):
+                    names.append(str(item.get("name")))
+            if not names:
+                return None
+            proxies_yaml = yaml.safe_dump(
+                {"proxies": proxies},
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            ).strip()
+            return {"proxies_yaml": proxies_yaml, "names": names, "proxies": None}
+
+        pyyaml_result = build_result_from_pyyaml(content)
+        if pyyaml_result:
+            return pyyaml_result
+
+        content = YAMLConverter.normalize(content)
 
         result = build_result_from_yaml(content)
         if result:
@@ -725,6 +778,9 @@ class SubscriptionManager:
         decoded = YAMLConverter.b64_decode(content.encode())
         if decoded:
             decoded_text = YAMLConverter.normalize(decoded.decode('utf-8', errors='ignore'))
+            pyyaml_result = build_result_from_pyyaml(decoded_text)
+            if pyyaml_result:
+                return pyyaml_result
             result = build_result_from_yaml(decoded_text)
             if result:
                 return result
@@ -1879,11 +1935,34 @@ def install_mihomo() -> bool:
         tmp.unlink(missing_ok=True)
         return False
 
+def ensure_pyyaml() -> bool:
+    global yaml
+    if yaml is not None:
+        return True
+    msg_warn("未检测到 PyYAML，正在安装...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "pyyaml"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode != 0:
+            msg_err("PyYAML 安装失败")
+            return False
+        yaml = importlib.import_module("yaml")
+        return True
+    except Exception:
+        msg_err("PyYAML 安装失败")
+        return False
+
 # ============== 主程序 ==============
 def main():
     if os.geteuid() != 0:
         print("请使用 root 权限运行此脚本")
         sys.exit(1)
+
+    ensure_pyyaml()
 
     if not install_mihomo():
         msg_err("Mihomo 安装失败，无法继续")
