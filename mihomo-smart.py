@@ -107,6 +107,7 @@ def get_auth() -> Tuple[str, str]:
             return user, pwd
     user = rand_str()
     pwd = rand_str()
+    WORKDIR.mkdir(parents=True, exist_ok=True)
     AUTH_FILE.write_text(f"{user}:{pwd}")
     return user, pwd
 
